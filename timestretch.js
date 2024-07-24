@@ -56,8 +56,25 @@ async function getLongestSongDuration(directory) {
   return maxDuration;
 }
 
+function cleanOutputDirectory(directory) {
+  console.log(`Cleaning output directory: ${directory}`);
+  if (fs.existsSync(directory)) {
+    fs.readdirSync(directory).forEach((file) => {
+      const filePath = path.join(directory, file);
+      fs.unlinkSync(filePath);
+    });
+    console.log('Output directory cleaned.');
+  } else {
+    console.log('Output directory does not exist. Creating it.');
+    fs.mkdirSync(directory, { recursive: true });
+  }
+}
+
 async function stretchSongs() {
   console.log('Starting song stretching process...');
+
+  // Clean the output directory before processing
+  cleanOutputDirectory(outputDir);
 
   // Check if songsDir exists
   if (!fs.existsSync(songsDir)) {
