@@ -1,4 +1,4 @@
-# Audio Cover Layering Tool
+# Song Layerer
 
 This project is a Node.js-based tool that downloads cover versions of a song, time-stretches them to the same duration (taking the longest as basis), and layers them together to create a unique audio experience.
 
