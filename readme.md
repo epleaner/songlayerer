@@ -1,15 +1,15 @@
 # Song Layerer
 
-This project is a Node.js-based tool that downloads cover versions of a song, time-stretches them to the same duration (taking the longest as basis), and layers them together to create a unique audio experience.
+This project is a Node.js-based tool that allows for experimental audio generation, by time-stretches collections of tracks to the same duration (taking the longest as basis), and layers them together.
 
-Heavily inspired by [Every Recording of Gymnopédie 1](https://slownames.bandcamp.com/album/every-recording-of-gymnop-die-1).
+Inspired by [Every Recording of Gymnopédie 1](https://slownames.bandcamp.com/album/every-recording-of-gymnop-die-1).
 
 ## Features
 
-- Download top cover versions of a song from YouTube
+- Download top N search results from YouTube
+- Use self-selected audio files as input
 - Time-stretch audio files to match the longest duration
 - Layer multiple audio files into a single output
-- Customizable number of covers to download and keyword exclusions
 
 ## Dependencies
 
@@ -32,13 +32,17 @@ Run the main script with the following command:
 
 ### Options:
 
-- `--download` or `-d`: Download songs first (default: false)
-- `--number` or `-n`: Number of covers to download (default: 5)
+- `--download` or `-d`: Download songs from YT first (default: false)
+- `--number` or `-n`: Number of songs to download (default: 5)
 - `--exclude` or `-e`: Comma-separated list of keywords to exclude from search (e.g `guitar,drums`)
 
 ### Example:
 
-`node main.js --download --number 3 --exclude "guitar,🎸" "Clair de Lune"`
+`node main.js -d -n 3 -e "guitar,🎸" "Clair de Lune"`
+
+### Alternative usage:
+
+Manually populate the `output/[search_query]/songs/` directory with audio files, and run `node main.js "search query"`. This skips the download step.
 
 ## Output
 
@@ -67,5 +71,7 @@ output/
 
 This tool does not promise a consonant result. To improve output quality, you can try the following:
 
-- check the downloaded songs for artifacts at the beginning and end of the file (e.g applause, vocals, etc.). remove these songs before timestretching and layering. (can run the tool again without the --download option)
+- check the downloaded songs for artifacts at the beginning and end of the file (e.g applause, vocals, etc.). remove these songs.
 - check the length of the downloaded songs. remove outliers (e.g much shorter or longer)
+
+Once you have a good set of songs, you can run the tool without the `--download` option to skip the download step.
