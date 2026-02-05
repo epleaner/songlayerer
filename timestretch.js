@@ -10,7 +10,7 @@ const baseDir = path.join(
 );
 const songsDir = path.join(baseDir, 'songs');
 const outputDir = path.join(baseDir, 'stretched_songs');
-const rubberbandPath = './lib/rubberband/rubberband';
+const rubberbandPath = './lib/rubberband/rubberband-r3';
 
 const ffmpegCommand = `ffmpeg -hide_banner -loglevel error -i`;
 
