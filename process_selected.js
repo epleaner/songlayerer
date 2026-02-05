@@ -23,6 +23,12 @@ function sanitizeName(name) {
     .slice(0, 180);
 }
 
+function normalizeLayerName(name) {
+  const base = path.basename(String(name || '').trim());
+  if (!base || base === '.' || base === '..') return null;
+  return base;
+}
+
 const cfgPath = process.argv[2];
 if (!cfgPath) {
   die('Usage: node process_selected.js <config.json>');
@@ -58,21 +64,34 @@ console.log(`Source songs: ${sourceSongsDir}`);
 console.log(`Selected layers: ${include.length}`);
 
 for (const name of include) {
-  const safe = sanitizeName(name);
-  const src = path.join(sourceSongsDir, safe);
-  const dest = path.join(runSongsDir, safe);
-  if (!fs.existsSync(src)) {
-    die(`Missing layer file: ${src}`);
+  const normalized = normalizeLayerName(name);
+  if (!normalized) {
+    die(`Invalid layer filename: ${String(name)}`);
   }
+
+  const exactSrc = path.join(sourceSongsDir, normalized);
+  const legacySrc = path.join(sourceSongsDir, sanitizeName(normalized));
+  const src = fs.existsSync(exactSrc) ? exactSrc : legacySrc;
+  if (!fs.existsSync(src)) {
+    die(`Missing layer file: ${exactSrc}`);
+  }
+
+  const dest = path.join(runSongsDir, normalized);
   fs.copyFileSync(src, dest);
 }
 
 fs.writeFileSync(
   path.join(runDir, 'manifest.json'),
-  JSON.stringify({ include: include.map(sanitizeName), updatedAt: Date.now() }, null, 2),
+  JSON.stringify(
+    {
+      include: include.map(normalizeLayerName).filter(Boolean),
+      updatedAt: Date.now(),
+    },
+    null,
+    2
+  ),
   'utf8'
 );
 
 run(process.execPath, [path.join(__dirname, 'timestretch.js'), '--base-dir', runDir]);
 run(process.execPath, [path.join(__dirname, 'layerer.js'), '--base-dir', runDir]);
-

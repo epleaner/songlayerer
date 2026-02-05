@@ -11,3 +11,39 @@ body {
 html {
   color-scheme: dark;
 }
+
+.slim-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+}
+
+.slim-range::-webkit-slider-runnable-track {
+  height: 3px;
+  background: rgb(64 64 64);
+}
+
+.slim-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 8px;
+  height: 8px;
+  border: 0;
+  border-radius: 0;
+  background: rgb(229 229 229);
+  margin-top: -2.5px;
+}
+
+.slim-range::-moz-range-track {
+  height: 3px;
+  border: 0;
+  border-radius: 0;
+  background: rgb(64 64 64);
+}
+
+.slim-range::-moz-range-thumb {
+  width: 8px;
+  height: 8px;
+  border: 0;
+  border-radius: 0;
+  background: rgb(229 229 229);
+}

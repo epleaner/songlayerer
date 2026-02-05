@@ -9,7 +9,7 @@
     "dev:server": "node server.js --dev",
     "dev:ui": "vite",
     "build": "vite build",
-    "start": "node server.js",
+    "start": "node scripts/start.mjs",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
