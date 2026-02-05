@@ -3,12 +3,10 @@ import path from 'path';
 import { execSync } from 'child_process';
 
 const searchQuery = process.argv[2];
-const baseDir = path.join(
-  'output',
-  searchQuery.replace(/[^a-z0-9]/gi, '_').toLowerCase()
-);
+const baseId = searchQuery.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+const baseDir = path.join('output', baseId);
 const stretchedSongsDir = path.join(baseDir, 'stretched_songs');
-const outputFile = path.join(baseDir, `layered_${searchQuery}.wav`);
+const outputFile = path.join(baseDir, `layered_${baseId}.wav`);
 
 function layerSongs() {
   console.log('Starting song layering process...');
@@ -20,6 +18,7 @@ function layerSongs() {
 
   if (files.length === 0) {
     console.log('No WAV files found in the stretched_songs directory.');
+    process.exitCode = 1;
     return;
   }
 
@@ -50,6 +49,7 @@ function layerSongs() {
   } catch (error) {
     console.error('An error occurred during the layering process:');
     console.error(error.message);
+    process.exitCode = 1;
   }
 }
 

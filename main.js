@@ -1,22 +1,16 @@
-import { exec } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { downloadTopCovers } from './songdl.js';
 
-// Function to execute a command and return a promise
-function runCommand(command) {
+function runNodeScript(script, args) {
   return new Promise((resolve, reject) => {
-    exec(command, (error, stdout, stderr) => {
-      if (error) {
-        console.error(`Error: ${error.message}`);
-        reject(error);
-        return;
-      }
-      if (stderr) {
-        console.error(`stderr: ${stderr}`);
-      }
-      console.log(`stdout: ${stdout}`);
-      resolve(stdout);
+    const child = spawn(process.execPath, [script, ...args], {
+      stdio: 'inherit',
+    });
+    child.on('close', (code) => {
+      if (code === 0) return resolve();
+      reject(new Error(`${script} exited with code ${code}`));
     });
   });
 }
@@ -41,18 +35,27 @@ async function processAudio(
 
     if (downloadSongs) {
       console.log(`Downloading top ${numCovers} versions of ${searchQuery}...`);
-      downloadTopCovers(searchQuery, numCovers, baseDir, excludeKeywords);
+      const downloaded = downloadTopCovers(
+        searchQuery,
+        numCovers,
+        baseDir,
+        excludeKeywords
+      );
+      if (downloaded <= 0) {
+        throw new Error('Download step failed (0 songs).');
+      }
     }
 
     console.log('Running timestretch.js...');
-    await runCommand(`node timestretch.js "${searchQuery}"`);
+    await runNodeScript('timestretch.js', [searchQuery]);
 
     console.log('Running layerer.js...');
-    await runCommand(`node layerer.js "${searchQuery}"`);
+    await runNodeScript('layerer.js', [searchQuery]);
 
     console.log('Audio processing completed successfully!');
   } catch (error) {
     console.error('An error occurred during audio processing:', error);
+    process.exitCode = 1;
   }
 }
 

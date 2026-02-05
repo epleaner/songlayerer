@@ -18,6 +18,15 @@ Inspired by [Every Recording of Gymnopédie 1](https://slownames.bandcamp.com/al
 - yt-dlp
 - Rubberband (MacOS ARM version included in `./lib/rubberband/`)
 
+### yt-dlp Notes
+
+YouTube frequently breaks older `yt-dlp` builds. If downloads fail with messages like **"Signature extraction failed"**, **HTTP 403**, or **"Only images are available"**, update `yt-dlp` (macOS: `brew upgrade yt-dlp`).
+
+If YouTube is rate-limiting or blocking your IP, you may need cookies. This tool supports:
+
+- `YTDLP_COOKIES_FROM_BROWSER=chrome` (or `firefox`, etc.)
+- `YTDLP_COOKIES=/path/to/cookies.txt`
+
 ## Installation
 
 1. Clone this repository
@@ -44,6 +53,13 @@ Run the main script with the following command:
 
 Manually populate the `output/[search_query]/songs/` directory with audio files, and run `node main.js "search query"`. This skips the download step.
 
+## UI (React)
+
+This repo includes a tiny local UI (Vite + React + Tailwind + shadcn/ui).
+
+- Dev: `pnpm dev` then open `http://localhost:5173`
+- Prod build: `pnpm build` then `pnpm start` (serves UI + API on `http://localhost:5174`)
+
 ## Output
 
 The processed files will be saved in the `output/` directory, organized by search query:
@@ -57,7 +73,7 @@ output/
 
     ├── `stretched_songs/`
 
-    └── `layered_[search_query].wav`
+    └── `layered_[sanitized_search_query].wav`
 ```
 
 ## File Structure

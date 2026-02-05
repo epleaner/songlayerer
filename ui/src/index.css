@@ -1,0 +1,13 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Keep things intentionally plain; shadcn provides component primitives. */
+html,
+body {
+  height: 100%;
+}
+
+html {
+  color-scheme: dark;
+}

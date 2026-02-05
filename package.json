@@ -5,12 +5,34 @@
   "main": "index.js",
   "type": "module",
   "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:server": "node server.js --dev",
+    "dev:ui": "vite",
+    "build": "vite build",
+    "start": "node server.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "music-metadata": "^10.0.0"
+    "@radix-ui/react-checkbox": "^1.1.1",
+    "@radix-ui/react-slot": "^1.1.1",
+    "busboy": "^1.6.0",
+    "clsx": "^2.1.1",
+    "music-metadata": "^10.0.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tailwind-merge": "^2.5.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.1",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.4.47",
+    "tailwindcss": "^3.4.13",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.8"
   }
 }

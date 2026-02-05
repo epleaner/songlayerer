@@ -11,6 +11,7 @@ const baseDir = path.join(
 const songsDir = path.join(baseDir, 'songs');
 const outputDir = path.join(baseDir, 'stretched_songs');
 const rubberbandPath = './lib/rubberband/rubberband-r3';
+const manifestPath = path.join(baseDir, 'manifest.json');
 
 const ffmpegCommand = `ffmpeg -hide_banner -loglevel error -i`;
 
@@ -26,34 +27,19 @@ function trimSilence(inputPath, outputPath) {
   );
 }
 
-async function getLongestSongDuration(directory) {
-  const files = fs
-    .readdirSync(directory)
-    .filter((file) => path.extname(file).toLowerCase() === '.mp3');
-  let maxDuration = 0;
-  let longestFile = '';
-
-  for (const file of files) {
-    const inputPath = path.join(directory, file);
-    const trimmedWavPath = path.join(
-      outputDir,
-      `trimmed_${file.replace('.mp3', '.wav')}`
-    );
-
-    console.log(`\nAnalyzing: ${file}`);
-    trimSilence(inputPath, trimmedWavPath);
-
-    const metadata = await parseFile(trimmedWavPath);
-    if (metadata.format.duration > maxDuration) {
-      maxDuration = metadata.format.duration;
-      longestFile = file;
-    }
+function loadManifestInclude() {
+  if (!fs.existsSync(manifestPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+    if (!parsed || !Array.isArray(parsed.include)) return null;
+    const include = parsed.include
+      .map(String)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    return include.length ? include : null;
+  } catch {
+    return null;
   }
-
-  console.log(
-    `\nLongest song: ${longestFile} (${maxDuration.toFixed(2)} seconds)`
-  );
-  return maxDuration;
 }
 
 function cleanOutputDirectory(directory) {
@@ -79,17 +65,58 @@ async function stretchSongs() {
   // Check if songsDir exists
   if (!fs.existsSync(songsDir)) {
     console.error(`Error: The songs directory '${songsDir}' does not exist.`);
+    process.exitCode = 1;
     return;
   }
 
-  const longestDuration = await getLongestSongDuration(songsDir);
-  const files = fs
+  const manifestInclude = loadManifestInclude();
+  const allMp3Files = fs
     .readdirSync(songsDir)
     .filter((file) => path.extname(file).toLowerCase() === '.mp3');
+  const mp3Files = manifestInclude
+    ? allMp3Files.filter((f) => manifestInclude.includes(f))
+    : allMp3Files;
+
+  if (mp3Files.length === 0) {
+    console.error(`Error: No .mp3 files found in '${songsDir}'.`);
+    process.exitCode = 1;
+    return;
+  }
+
+  if (manifestInclude) {
+    console.log(`Using manifest (${mp3Files.length} song(s))`);
+  }
+
+  // Determine longest duration among selected files
+  const longestDuration = await (async () => {
+    let max = 0;
+    let longestFile = '';
+    for (const file of mp3Files) {
+      const inputPath = path.join(songsDir, file);
+      const trimmedWavPath = path.join(
+        outputDir,
+        `trimmed_${file.replace('.mp3', '.wav')}`
+      );
+
+      console.log(`\nAnalyzing: ${file}`);
+      trimSilence(inputPath, trimmedWavPath);
+
+      const metadata = await parseFile(trimmedWavPath);
+      if (metadata.format.duration > max) {
+        max = metadata.format.duration;
+        longestFile = file;
+      }
+    }
+
+    console.log(
+      `\nLongest song: ${longestFile} (${max.toFixed(2)} seconds)`
+    );
+    return max;
+  })();
 
   const songAlterations = [];
 
-  for (const file of files) {
+  for (const file of mp3Files) {
     console.log(`\nProcessing: ${file}`);
     const inputPath = path.join(songsDir, file);
     const outputPath = path.join(
@@ -153,4 +180,5 @@ async function stretchSongs() {
 stretchSongs().catch((error) => {
   console.error('An error occurred during the stretching process:');
   console.error(error);
+  process.exitCode = 1;
 });

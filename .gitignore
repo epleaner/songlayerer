@@ -6,6 +6,8 @@ yarn-error.log
 # Build output
 build/
 dist/
+ui/dist/
+ui/.vite/
 
 # Environment variables
 .env
@@ -17,6 +19,7 @@ dist/
 .idea/
 *.swp
 *.swo
+.codex/
 
 # OS generated files
 .DS_Store
