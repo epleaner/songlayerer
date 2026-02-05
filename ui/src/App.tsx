@@ -58,6 +58,7 @@ type SongFile = {
 
 type SongsResponse = {
   baseId: string;
+  runId?: string | null;
   songsDir: string;
   files: SongFile[];
 };
@@ -92,7 +93,7 @@ function fmtTime(ts: number) {
 }
 
 function baseIdFromQuery(query: string) {
-  return query.replace(/[^a-z0-9]/gi, '_').toLowerCase();
+  return query.replace(/[^a-z0-9]/gi, '_').toLowerCase().slice(0, 120);
 }
 
 function youtubeIdFromUrl(url: string) {
@@ -106,6 +107,11 @@ function youtubeIdFromUrl(url: string) {
   return null;
 }
 
+function runIdFromOutputUrl(outputUrl: string) {
+  const m = outputUrl.match(/\/runs\/([^/]+)\/layered\.wav(?:\?|#|$)/);
+  return m?.[1] ? decodeURIComponent(m[1]) : null;
+}
+
 export default function App() {
   const [mode, setMode] = useState<Mode>('download');
   const [query, setQuery] = useState('');
@@ -114,6 +120,7 @@ export default function App() {
 
   const [health, setHealth] = useState<Health | null>(null);
   const [songs, setSongs] = useState<SongsResponse | null>(null);
+  const [songsRunId, setSongsRunId] = useState<string | null>(null);
 
   const [searchItems, setSearchItems] = useState<SearchItem[]>([]);
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
@@ -167,9 +174,9 @@ export default function App() {
       stopPolling();
       // refresh file list after jobs that might have produced output
       if (baseId) {
-        api<SongsResponse>(`/api/songs/${encodeURIComponent(baseId)}`)
-          .then(setSongs)
-          .catch(() => {});
+        const rid = next.result?.outputUrl ? runIdFromOutputUrl(next.result.outputUrl) : null;
+        if (rid) setSongsRunId(rid);
+        else api<SongsResponse>(`/api/songs/${encodeURIComponent(baseId)}`).then(setSongs).catch(() => {});
       }
       api<{ runs: RunSummary[] }>('/api/runs?limit=30')
         .then((r) => setRuns(r.runs))
@@ -197,10 +204,11 @@ export default function App() {
       setSongs(null);
       return;
     }
-    api<SongsResponse>(`/api/songs/${encodeURIComponent(baseId)}`)
+    const qs = songsRunId ? `?runId=${encodeURIComponent(songsRunId)}` : '';
+    api<SongsResponse>(`/api/songs/${encodeURIComponent(baseId)}${qs}`)
       .then(setSongs)
       .catch(() => setSongs(null));
-  }, [baseId]);
+  }, [baseId, songsRunId]);
 
   useEffect(() => {
     const el = logRef.current;
@@ -227,7 +235,8 @@ export default function App() {
 
   async function refreshSongs() {
     if (!baseId) return;
-    const next = await api<SongsResponse>(`/api/songs/${encodeURIComponent(baseId)}`);
+    const qs = songsRunId ? `?runId=${encodeURIComponent(songsRunId)}` : '';
+    const next = await api<SongsResponse>(`/api/songs/${encodeURIComponent(baseId)}${qs}`);
     setSongs(next);
   }
 
@@ -246,16 +255,19 @@ export default function App() {
       f.name === name ? { ...f, selected: !f.selected } : f
     );
     setSongs({ ...songs, files: nextFiles });
-    try {
-      await persistInclude(nextFiles);
-    } catch {
-      // ignore
+    if (!songsRunId) {
+      try {
+        await persistInclude(nextFiles);
+      } catch {
+        // ignore
+      }
     }
   }
 
   async function onSearch(e: FormEvent) {
     e.preventDefault();
     setError(null);
+    setSongsRunId(null);
     const trimmed = query.trim();
     if (!trimmed) {
       setError('Enter a search query.');
@@ -286,6 +298,7 @@ export default function App() {
       setError('Select at least one result.');
       return;
     }
+    setSongsRunId(null);
     setBusy(true);
     setJob(null);
     setJobId(null);
@@ -336,6 +349,7 @@ export default function App() {
           query: trimmed,
           download: false,
           include: selectedSongFiles.map((f) => f.name),
+          sourceRunId: songsRunId,
         }),
       });
       setJobId(started.id);
@@ -361,6 +375,7 @@ export default function App() {
 
     setUploading(true);
     try {
+      setSongsRunId(null);
       const fd = new FormData();
       for (const f of selected) fd.append('files', f);
       const res = await fetch(`/api/upload/${encodeURIComponent(baseId)}`, {
@@ -404,6 +419,7 @@ export default function App() {
       if (run.query) setQuery(run.query);
       if (run.kind === 'download') {
         setMode('download');
+        setSongsRunId(null);
         if (run.options?.number) setNumber(Number(run.options.number) || 5);
         if (Array.isArray(run.options?.exclude))
           setExclude(run.options!.exclude!.join(','));
@@ -416,12 +432,13 @@ export default function App() {
         }
       } else {
         setMode('local');
-        if (run.base_id && Array.isArray(run.include)) {
-          await api(`/api/manifest/${encodeURIComponent(run.base_id)}`, {
-            method: 'POST',
-            body: JSON.stringify({ include: run.include }),
-          });
-          await refreshSongs();
+        if (run.base_id) {
+          setSongsRunId(run.id);
+          api<SongsResponse>(
+            `/api/songs/${encodeURIComponent(run.base_id)}?runId=${encodeURIComponent(run.id)}`
+          )
+            .then(setSongs)
+            .catch(() => {});
         }
       }
 
@@ -485,7 +502,10 @@ export default function App() {
         <div className="mt-5 space-y-3">
           <Input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setSongsRunId(null);
+              setQuery(e.target.value);
+            }}
             placeholder='search query (e.g. "Clair de Lune")'
             disabled={status === 'running'}
             autoCapitalize="off"
@@ -497,7 +517,10 @@ export default function App() {
           <div className="flex items-center gap-2">
             <Button
               type="button"
-              onClick={() => setMode('download')}
+              onClick={() => {
+                setSongsRunId(null);
+                setMode('download');
+              }}
               className={
                 mode === 'download'
                   ? 'bg-neutral-100 text-neutral-900 hover:bg-white'
@@ -682,7 +705,21 @@ export default function App() {
               <div className="flex items-center justify-between">
                 <div className="text-xs text-neutral-300">
                   layers ({selectedSongFiles.length}/{songs.files.length})
+                  {songsRunId ? (
+                    <span className="text-neutral-500"> · from run</span>
+                  ) : null}
                 </div>
+                {songsRunId ? (
+                  <Button
+                    type="button"
+                    className="h-8 px-2.5 text-[11px] bg-neutral-900/40 text-neutral-100 border-neutral-800 hover:bg-neutral-900"
+                    onClick={() => setSongsRunId(null)}
+                    disabled={status === 'running'}
+                    title="Back to current layer folder"
+                  >
+                    latest layers
+                  </Button>
+                ) : null}
                 <Button
                   type="button"
                   onClick={onProcess}

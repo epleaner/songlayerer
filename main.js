@@ -20,12 +20,12 @@ async function processAudio(
   searchQuery,
   downloadSongs = false,
   numCovers = 5,
-  excludeKeywords = []
+  excludeKeywords = [],
+  baseDirOverride = null
 ) {
-  const baseDir = path.join(
-    'output',
-    searchQuery.replace(/[^a-z0-9]/gi, '_').toLowerCase()
-  );
+  const baseDir = baseDirOverride
+    ? path.resolve(baseDirOverride)
+    : path.join('output', searchQuery.replace(/[^a-z0-9]/gi, '_').toLowerCase());
 
   try {
     // Create base directory if it doesn't exist
@@ -47,10 +47,10 @@ async function processAudio(
     }
 
     console.log('Running timestretch.js...');
-    await runNodeScript('timestretch.js', [searchQuery]);
+    await runNodeScript('timestretch.js', ['--base-dir', baseDir]);
 
     console.log('Running layerer.js...');
-    await runNodeScript('layerer.js', [searchQuery]);
+    await runNodeScript('layerer.js', ['--base-dir', baseDir]);
 
     console.log('Audio processing completed successfully!');
   } catch (error) {
@@ -64,11 +64,17 @@ const args = process.argv.slice(2);
 let searchQuery,
   downloadSongs = false,
   numCovers = 5,
-  excludeKeywords = [];
+  excludeKeywords = [],
+  baseDirOverride = null;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--download' || args[i] === '-d') {
     downloadSongs = true;
+  } else if (args[i] === '--base-dir') {
+    if (i + 1 < args.length) {
+      baseDirOverride = args[i + 1];
+      i++;
+    }
   } else if (args[i] === '--number' || args[i] === '-n') {
     if (i + 1 < args.length && !isNaN(parseInt(args[i + 1]))) {
       numCovers = parseInt(args[i + 1]);
@@ -93,4 +99,4 @@ if (!searchQuery) {
 }
 
 // Run the main function
-processAudio(searchQuery, downloadSongs, numCovers, excludeKeywords);
+processAudio(searchQuery, downloadSongs, numCovers, excludeKeywords, baseDirOverride);

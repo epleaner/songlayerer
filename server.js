@@ -50,6 +50,12 @@ function safeBaseId(s) {
   return out;
 }
 
+function safeRunId(s) {
+  return String(s || '')
+    .replace(/[^a-z0-9_-]/gi, '_')
+    .slice(0, 160);
+}
+
 async function readJson(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
@@ -133,6 +139,21 @@ function baseDirsFor(baseId) {
     songsDir: path.join(baseDir, 'songs'),
     manifestPath: path.join(baseDir, 'manifest.json'),
     downloadsPath: path.join(baseDir, 'downloads.json'),
+  };
+}
+
+function runDirsFor(baseId, runId) {
+  const safeBase = safeBaseId(baseId);
+  const safeRun = safeRunId(runId);
+  const runDir = path.join(__dirname, 'output', safeBase, 'runs', safeRun);
+  return {
+    runDir,
+    runSongsDir: path.join(runDir, 'songs'),
+    runManifestPath: path.join(runDir, 'manifest.json'),
+    runOutputFileAbs: path.join(runDir, 'layered.wav'),
+    runOutputFileRel: path.join('output', safeBase, 'runs', safeRun, 'layered.wav'),
+    runOutputUrl: `/output/${safeBase}/runs/${encodeURIComponent(safeRun)}/layered.wav`,
+    runBaseDirRel: path.join('output', safeBase, 'runs', safeRun),
   };
 }
 
@@ -252,7 +273,7 @@ function getHealth() {
   };
 }
 
-function startJob({ query, download, number, exclude, include }) {
+function startJob({ query, download, number, exclude, include, sourceRunId }) {
   const now = Date.now();
   const id = `${safeId(query)}_${now}`;
   const job = {
@@ -268,9 +289,8 @@ function startJob({ query, download, number, exclude, include }) {
   runningJobId = id;
 
   const baseId = baseIdFromQuery(query);
-  const baseDir = path.join('output', baseId);
-  const outputFile = path.join(baseDir, `layered_${baseId}.wav`);
-  const outputUrl = `/${outputFile.split(path.sep).join('/')}`;
+  const runDirs = runDirsFor(baseId, id);
+  fs.mkdirSync(runDirs.runDir, { recursive: true });
 
   db.insertRun({
     id,
@@ -278,7 +298,7 @@ function startJob({ query, download, number, exclude, include }) {
     query,
     base_id: baseId,
     mode: download ? 'download' : 'local',
-    options_json: JSON.stringify({ download, number, exclude }),
+    options_json: JSON.stringify({ download, number, exclude, sourceRunId: sourceRunId || null }),
     selected_json: null,
     include_json: include ? JSON.stringify(include) : null,
     output_url: null,
@@ -291,16 +311,51 @@ function startJob({ query, download, number, exclude, include }) {
   });
 
   const args = [];
+  let childArgs = [];
   if (download) {
-    args.push('--download');
-    if (number) args.push('--number', String(number));
-    if (exclude?.length) args.push('--exclude', exclude.join(','));
+    // One-shot: download + process into a unique run directory.
+    childArgs = [path.join(__dirname, 'main.js'), '--base-dir', runDirs.runDir, '--download'];
+    if (number) childArgs.push('--number', String(number));
+    if (exclude?.length) childArgs.push('--exclude', exclude.join(','));
+    childArgs.push(query);
+    args.push(...childArgs.slice(1));
+    job.logLines.push(
+      `$ node main.js ${args.map((a) => JSON.stringify(a)).join(' ')}`
+    );
+  } else {
+    if (!include?.length) {
+      job.status = 'error';
+      job.error = 'No layers selected.';
+      job.endedAt = Date.now();
+      db.updateRun({
+        id,
+        status: 'error',
+        ended_at: job.endedAt,
+        error: job.error,
+        log_text: job.logLines.join('\n'),
+      });
+      return job;
+    }
+
+    const sourceBaseId = safeBaseId(baseId);
+    const sourceSongsDir = sourceRunId
+      ? path.join(__dirname, 'output', sourceBaseId, 'runs', safeRunId(sourceRunId), 'songs')
+      : path.join(__dirname, 'output', sourceBaseId, 'songs');
+    const cfgPath = path.join(runDirs.runDir, 'request.json');
+    fs.writeFileSync(
+      cfgPath,
+      JSON.stringify(
+        { baseId: sourceBaseId, runId: safeRunId(id), include, sourceSongsDir },
+        null,
+        2
+      ),
+      'utf8'
+    );
+    childArgs = [path.join(__dirname, 'process_selected.js'), cfgPath];
+    job.logLines.push(`$ node process_selected.js "${cfgPath}"`);
   }
-  args.push(query);
 
-  job.logLines.push(`$ node main.js ${args.map((a) => JSON.stringify(a)).join(' ')}`);
-
-  const child = spawn(process.execPath, [path.join(__dirname, 'main.js'), ...args], {
+  const child = spawn(process.execPath, childArgs, {
     stdio: ['ignore', 'pipe', 'pipe'],
     env: process.env,
     detached: true, // allow killing the whole process group (yt-dlp/ffmpeg/rubberband)
@@ -309,6 +364,10 @@ function startJob({ query, download, number, exclude, include }) {
   Object.defineProperty(job, '_child', { value: child, enumerable: false });
   Object.defineProperty(job, '_query', { value: query, enumerable: false });
   Object.defineProperty(job, '_baseId', { value: baseId, enumerable: false });
+  Object.defineProperty(job, '_outputFileAbs', { value: runDirs.runOutputFileAbs, enumerable: false });
+  Object.defineProperty(job, '_outputFileRel', { value: runDirs.runOutputFileRel, enumerable: false });
+  Object.defineProperty(job, '_outputUrl', { value: runDirs.runOutputUrl, enumerable: false });
+  Object.defineProperty(job, '_resultBaseDirRel', { value: runDirs.runBaseDirRel, enumerable: false });
 
   child.stdout.on('data', (c) => appendLines(job, c));
   child.stderr.on('data', (c) => appendLines(job, c));
@@ -319,9 +378,13 @@ function startJob({ query, download, number, exclude, include }) {
     job.endedAt = job.endedAt ?? Date.now();
     runningJobId = runningJobId === id ? null : runningJobId;
 
-    const { baseDir, outputFile, outputUrl } = computeResult(query);
+    const outputFileAbs = job._outputFileAbs;
+    const outputFileRel = job._outputFileRel;
+    const outputUrl = job._outputUrl;
+    const resultBaseDir = job._resultBaseDirRel;
+
     if (stopped) {
-      if (fs.existsSync(outputFile)) job.result = { outputUrl, baseDir };
+      if (fs.existsSync(outputFileAbs)) job.result = { outputUrl, baseDir: resultBaseDir };
       db.updateRun({
         id,
         status: 'stopped',
@@ -329,14 +392,14 @@ function startJob({ query, download, number, exclude, include }) {
         error: job.error,
         log_text: job.logLines.join('\n'),
         output_url: job.result?.outputUrl || null,
-        output_file: fs.existsSync(outputFile) ? outputFile : null,
+        output_file: fs.existsSync(outputFileAbs) ? outputFileRel : null,
       });
       return;
     }
 
-    if (code === 0 && fs.existsSync(outputFile)) {
+    if (code === 0 && fs.existsSync(outputFileAbs)) {
       job.status = 'success';
-      job.result = { outputUrl, baseDir };
+      job.result = { outputUrl, baseDir: resultBaseDir };
       db.updateRun({
         id,
         status: 'success',
@@ -344,12 +407,12 @@ function startJob({ query, download, number, exclude, include }) {
         error: null,
         log_text: job.logLines.join('\n'),
         output_url: outputUrl,
-        output_file: outputFile,
+        output_file: outputFileRel,
       });
     } else {
       job.status = 'error';
       job.error = `Process exited with code ${code}`;
-      job.result = fs.existsSync(outputFile) ? { outputUrl, baseDir } : null;
+      job.result = fs.existsSync(outputFileAbs) ? { outputUrl, baseDir: resultBaseDir } : null;
       job.logLines.push(job.error);
       db.updateRun({
         id,
@@ -358,7 +421,7 @@ function startJob({ query, download, number, exclude, include }) {
         error: job.error,
         log_text: job.logLines.join('\n'),
         output_url: job.result?.outputUrl || null,
-        output_file: fs.existsSync(outputFile) ? outputFile : null,
+        output_file: fs.existsSync(outputFileAbs) ? outputFileRel : null,
       });
     }
   });
@@ -481,30 +544,22 @@ function stopJobById(id) {
     }, 1500);
   }
 
-  const query = job._query || null;
-  const baseId = job._baseId || null;
-  if (query) {
-    const { baseDir, outputFile, outputUrl } = computeResult(query);
-    if (fs.existsSync(outputFile)) job.result = { outputUrl, baseDir };
-    db.updateRun({
-      id,
-      status: 'stopped',
-      ended_at: job.endedAt,
-      error: job.error,
-      log_text: job.logLines.join('\n'),
-      output_url: job.result?.outputUrl || null,
-      output_file: fs.existsSync(outputFile) ? outputFile : null,
-    });
-  } else if (baseId) {
-    job.result = { baseDir: path.join('output', baseId) };
-    db.updateRun({
-      id,
-      status: 'stopped',
-      ended_at: job.endedAt,
-      error: job.error,
-      log_text: job.logLines.join('\n'),
-    });
+  const outputFileAbs = job._outputFileAbs || null;
+  const outputFileRel = job._outputFileRel || null;
+  const outputUrl = job._outputUrl || null;
+  const resultBaseDir = job._resultBaseDirRel || null;
+  if (outputFileAbs && outputUrl && resultBaseDir && fs.existsSync(outputFileAbs)) {
+    job.result = { outputUrl, baseDir: resultBaseDir };
   }
+  db.updateRun({
+    id,
+    status: 'stopped',
+    ended_at: job.endedAt,
+    error: job.error,
+    log_text: job.logLines.join('\n'),
+    output_url: job.result?.outputUrl || null,
+    output_file: outputFileAbs && outputFileRel && fs.existsSync(outputFileAbs) ? outputFileRel : null,
+  });
 
   return { ok: true, code: 200, job };
 }
@@ -553,8 +608,16 @@ const server = http.createServer(async (req, res) => {
 
     if (run.base_id) {
       try {
-        const { songsDir, manifestPath } = baseDirsFor(run.base_id);
+        const baseId = safeBaseId(run.base_id);
+        const runId = safeRunId(run.id);
+        const runDirs = runDirsFor(baseId, runId);
+        const baseDirs = baseDirsFor(baseId);
+
+        const preferRunDir = fs.existsSync(runDirs.runSongsDir);
+        const songsDir = preferRunDir ? runDirs.runSongsDir : baseDirs.songsDir;
+        const manifestPath = preferRunDir ? runDirs.runManifestPath : baseDirs.manifestPath;
         const include = readManifestInclude(manifestPath);
+
         const names = fs.existsSync(songsDir)
           ? fs
               .readdirSync(songsDir)
@@ -562,10 +625,15 @@ const server = http.createServer(async (req, res) => {
               .slice(0, 400)
           : [];
         out.songs = {
+          runId: preferRunDir ? runId : null,
           songsDir,
           files: names.map((name) => ({
             name,
-            url: `/output/${run.base_id}/songs/${encodeURIComponent(name)}`,
+            url: preferRunDir
+              ? `/output/${baseId}/runs/${encodeURIComponent(runId)}/songs/${encodeURIComponent(
+                  name
+                )}`
+              : `/output/${baseId}/songs/${encodeURIComponent(name)}`,
             selected: include ? include.includes(name) : true,
           })),
         };
@@ -655,12 +723,13 @@ const server = http.createServer(async (req, res) => {
       const include = Array.isArray(body?.include)
         ? body.include.map(String).map((s) => s.trim()).filter(Boolean)
         : null;
+      const sourceRunId = body?.sourceRunId ? safeRunId(String(body.sourceRunId)) : null;
       if (include) {
         const { manifestPath } = baseDirsFor(baseId);
         writeManifestInclude(manifestPath, include);
       }
 
-      const job = startJob({ query, download, number, exclude, include });
+      const job = startJob({ query, download, number, exclude, include, sourceRunId });
       return json(res, 200, { id: job.id });
     } catch (e) {
       return json(res, 400, { error: e instanceof Error ? e.message : String(e) });
@@ -718,7 +787,10 @@ const server = http.createServer(async (req, res) => {
     if (req.method !== 'GET') return methodNotAllowed(res);
     const baseId = safeBaseId(decodeURIComponent(pathname.slice('/api/songs/'.length)));
     if (!baseId) return json(res, 400, { error: 'Missing baseId' });
-    const { songsDir, manifestPath } = baseDirsFor(baseId);
+    const runId = u.searchParams.get('runId') ? safeRunId(u.searchParams.get('runId')) : null;
+    const dirs = runId ? runDirsFor(baseId, runId) : baseDirsFor(baseId);
+    const songsDir = runId ? dirs.runSongsDir : dirs.songsDir;
+    const manifestPath = runId ? dirs.runManifestPath : dirs.manifestPath;
     const include = readManifestInclude(manifestPath);
     const names = fs.existsSync(songsDir)
       ? fs
@@ -728,10 +800,14 @@ const server = http.createServer(async (req, res) => {
       : [];
     const files = names.map((name) => ({
       name,
-      url: `/output/${baseId}/songs/${encodeURIComponent(name)}`,
+      url: runId
+        ? `/output/${baseId}/runs/${encodeURIComponent(runId)}/songs/${encodeURIComponent(
+            name
+          )}`
+        : `/output/${baseId}/songs/${encodeURIComponent(name)}`,
       selected: include ? include.includes(name) : true,
     }));
-    return json(res, 200, { baseId, songsDir, files });
+    return json(res, 200, { baseId, runId, songsDir, files });
   }
 
   if (pathname.startsWith('/api/files/')) {
