@@ -22,9 +22,12 @@ function runSql({ sql, params = {}, json = false }) {
   const args = [];
   if (json) args.push('-json');
   args.push('-batch', DB_PATH);
-  args.push('-cmd', 'PRAGMA journal_mode=WAL;');
-  args.push('-cmd', 'PRAGMA synchronous=NORMAL;');
-  args.push('-cmd', 'PRAGMA busy_timeout=5000;');
+  // Avoid emitting JSON output for pragmas when `-json` is enabled.
+  if (!json) {
+    args.push('-cmd', 'PRAGMA journal_mode=WAL;');
+    args.push('-cmd', 'PRAGMA synchronous=NORMAL;');
+    args.push('-cmd', 'PRAGMA busy_timeout=5000;');
+  }
   args.push('-cmd', '.param init');
   for (const [k, v] of Object.entries(params)) {
     args.push('-cmd', `.param set $${k} ${sqlValue(v)}`);
@@ -141,4 +144,3 @@ export const db = {
   listRuns,
   getRun,
 };
-
