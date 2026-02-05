@@ -60,6 +60,24 @@ function ensureDir(p) {
   fs.mkdirSync(p, { recursive: true });
 }
 
+function unlinkIfExists(p) {
+  try {
+    if (fs.existsSync(p) && fs.statSync(p).isFile()) fs.unlinkSync(p);
+  } catch {
+    // ignore
+  }
+}
+
+function writeManifestInclude(baseDir, include) {
+  const out = {
+    include: (Array.isArray(include) ? include : [])
+      .map((x) => String(x).trim())
+      .filter(Boolean),
+  };
+  const manifestPath = path.join(baseDir, 'manifest.json');
+  fs.writeFileSync(manifestPath, JSON.stringify(out, null, 2), 'utf8');
+}
+
 function loadDownloadsMap(downloadsPath) {
   if (!fs.existsSync(downloadsPath)) return { items: [] };
   try {
@@ -111,9 +129,25 @@ const itemsPath = process.argv[3];
 if (!baseId || !itemsPath) usage();
 
 const payload = readJson(itemsPath);
-const items = Array.isArray(payload?.items) ? payload.items : [];
-if (items.length === 0) {
+const rawItems = Array.isArray(payload?.items) ? payload.items : [];
+if (rawItems.length === 0) {
   console.error('No items to download');
+  process.exit(1);
+}
+
+const selectedIds = new Set();
+const items = [];
+for (const raw of rawItems) {
+  const id = String(raw?.id || '').trim();
+  const url = String(raw?.url || raw?.webpage_url || '').trim();
+  const title = sanitizeFilename(raw?.title || id || url);
+  if (!id || !url || selectedIds.has(id)) continue;
+  selectedIds.add(id);
+  items.push({ id, url, title });
+}
+
+if (items.length === 0) {
+  console.error('No valid items to download');
   process.exit(1);
 }
 
@@ -124,13 +158,20 @@ ensureDir(songsDir);
 const downloadsPath = path.join(baseDir, 'downloads.json');
 const downloads = loadDownloadsMap(downloadsPath);
 
+// Keep the base songs directory aligned to the current selection.
+const stale = downloads.items.filter((x) => x && x.id && !selectedIds.has(x.id));
+for (const entry of stale) {
+  if (!entry?.file) continue;
+  unlinkIfExists(path.join(songsDir, entry.file));
+}
+downloads.items = downloads.items.filter((x) => x && x.id && selectedIds.has(x.id));
+
 let ok = 0;
 for (let i = 0; i < items.length; i++) {
-  const it = items[i] || {};
-  const id = String(it.id || '').trim();
-  const url = String(it.url || it.webpage_url || '').trim();
-  const title = sanitizeFilename(it.title || id || url);
-  if (!id || !url) continue;
+  const it = items[i];
+  const id = it.id;
+  const url = it.url;
+  const title = it.title;
 
   if (hasDownloaded(downloads, id)) {
     const prev = downloads.items.find((x) => x.id === id);
@@ -160,7 +201,14 @@ for (let i = 0; i < items.length; i++) {
   }
 }
 
+downloads.items = downloads.items.filter(
+  (x) => x && x.id && selectedIds.has(x.id) && existingFileOk(songsDir, x.file)
+);
 writeJson(downloadsPath, downloads);
+writeManifestInclude(
+  baseDir,
+  downloads.items.map((x) => x.file).filter(Boolean)
+);
 
 if (ok <= 0) {
   console.error('Download step failed (0 songs).');
@@ -168,4 +216,3 @@ if (ok <= 0) {
 }
 
 console.log(`Downloaded/available: ${ok}/${items.length}`);
-

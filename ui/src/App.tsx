@@ -255,6 +255,7 @@ export default function App() {
   const pollRef = useRef<number | null>(null);
   const logRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  const resultsStepRef = useRef<HTMLElement | null>(null);
 
   const baseId = useMemo(() => baseIdFromQuery(query.trim()), [query]);
 
@@ -381,6 +382,25 @@ export default function App() {
     }
   }
 
+  function setAllSearchSelection(selected: boolean) {
+    const next: Record<string, boolean> = {};
+    for (const it of searchItems) next[it.id] = selected;
+    setSelectedIds(next);
+  }
+
+  async function setAllSongSelection(selected: boolean) {
+    if (!songs) return;
+    const nextFiles = songs.files.map((f) => ({ ...f, selected }));
+    setSongs({ ...songs, files: nextFiles });
+    if (!songsRunId) {
+      try {
+        await persistInclude(nextFiles);
+      } catch {
+        // ignore persistence failure here; UI state is still useful
+      }
+    }
+  }
+
   async function onSearch(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -480,6 +500,11 @@ export default function App() {
     }
   }
 
+  function goToResultsStep() {
+    if (!resultsStepRef.current) return;
+    resultsStepRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
   async function onUpload(ev: ChangeEvent<HTMLInputElement>) {
     setError(null);
     const selected = Array.from(ev.target.files || []);
@@ -526,6 +551,12 @@ export default function App() {
 
   const outputUrl = job?.result?.outputUrl || null;
   const embedId = previewUrl ? youtubeIdFromUrl(previewUrl) : null;
+  const hasSearchItems = searchItems.length > 0;
+  const hasLayers = Boolean(songs?.files?.length);
+  const showResultsStep = mode === 'download' && hasSearchItems;
+  const showLayersStep = hasLayers;
+  const layersStepNumber = showResultsStep ? 4 : 3;
+  const finalStepNumber = 2 + (showResultsStep ? 1 : 0) + (showLayersStep ? 1 : 0);
 
   async function loadRun(id: string) {
     setError(null);
@@ -659,94 +690,133 @@ export default function App() {
             </div>
           </aside>
 
-          <main className="min-h-0 flex flex-col gap-3 overflow-hidden">
-            <div className="flex-1 min-h-0 overflow-y-auto space-y-3 pr-1">
-              <Input
-                value={query}
-                onChange={(e) => {
-                  setSongsRunId(null);
-                  setQuery(e.target.value);
-                }}
-                placeholder='search query (e.g. "Clair de Lune")'
-                disabled={status === 'running'}
-                autoCapitalize="off"
-                autoCorrect="off"
-                spellCheck={false}
-                autoFocus
-              />
+          <main className="main-column min-h-0 flex flex-col gap-4 overflow-hidden">
+            <div className="main-scroll-area flex-1 min-h-0 overflow-y-auto space-y-4 pr-1">
+              <section className="main-panel">
+                <div className="main-panel-head">
+                  <div>
+                    <div className="panel-title">1. source mode</div>
+                  </div>
+                </div>
 
-              <div className="flex items-center gap-2">
-                <div
-                  role="tablist"
-                  aria-label="mode"
-                  className="inline-flex border border-neutral-800 bg-neutral-900/40"
-                >
-                  <button
-                    role="tab"
-                    type="button"
-                    aria-selected={mode === 'download'}
-                    onClick={() => {
-                      setSongsRunId(null);
-                      setMode('download');
-                    }}
-                    disabled={status === 'running'}
-                    className={
-                      mode === 'download'
-                        ? 'h-9 px-3 text-xs font-medium bg-neutral-100 text-neutral-900'
-                        : 'h-9 px-3 text-xs font-medium text-neutral-300 hover:bg-neutral-900'
-                    }
-                  >
-                    download
-                  </button>
-                  <button
-                    role="tab"
-                    type="button"
-                    aria-selected={mode === 'local'}
-                    onClick={() => setMode('local')}
-                    disabled={status === 'running'}
-                    className={
-                      mode === 'local'
-                        ? 'h-9 px-3 text-xs font-medium bg-neutral-100 text-neutral-900'
-                        : 'h-9 px-3 text-xs font-medium text-neutral-300 hover:bg-neutral-900'
-                    }
-                  >
-                    local mp3s
-                  </button>
+                <div className="mt-1">
+                  <div role="tablist" aria-label="mode" className="grid grid-cols-2 gap-2">
+                    <button
+                      role="tab"
+                      type="button"
+                      aria-selected={mode === 'download'}
+                      onClick={() => {
+                        setSongsRunId(null);
+                        setMode('download');
+                      }}
+                      disabled={status === 'running'}
+                      className={mode === 'download' ? 'mode-option is-active' : 'mode-option'}
+                    >
+                      <span className="mode-option-title">download</span>
+                      <span className="mode-option-copy">search and fetch from YouTube</span>
+                    </button>
+                    <button
+                      role="tab"
+                      type="button"
+                      aria-selected={mode === 'local'}
+                      onClick={() => setMode('local')}
+                      disabled={status === 'running'}
+                      className={mode === 'local' ? 'mode-option is-active' : 'mode-option'}
+                    >
+                      <span className="mode-option-title">local mp3s</span>
+                      <span className="mode-option-copy">upload files from your machine</span>
+                    </button>
+                  </div>
                 </div>
-                <div className="ml-2 text-xs text-neutral-400">
-                  {mode === 'download'
-                    ? 'search → preview → select → download → process'
-                    : 'upload → select → process'}
-                </div>
-              </div>
+              </section>
 
               {mode === 'download' ? (
-                <form onSubmit={onSearch} className="flex flex-wrap items-center gap-3">
+                <section className="main-panel">
+                  <div className="main-panel-head">
+                    <div>
+                      <div className="panel-title">2. search candidates</div>
+                    </div>
+                  </div>
+                  <form onSubmit={onSearch} className="grid gap-3 sm:grid-cols-[112px_minmax(0,1fr)_auto]">
+                    <div className="grid gap-2 sm:col-span-3 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <Input
+                        className="h-8 rounded-none text-xs"
+                        value={query}
+                        onChange={(e) => {
+                          setSongsRunId(null);
+                          setQuery(e.target.value);
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+                            e.preventDefault();
+                            e.currentTarget.form?.requestSubmit();
+                          }
+                        }}
+                        placeholder='search query (e.g. "Clair de Lune")'
+                        disabled={status === 'running'}
+                        autoCapitalize="off"
+                        autoCorrect="off"
+                        spellCheck={false}
+                        autoFocus
+                      />
+                      <Button
+                        type="submit"
+                        disabled={!canSearch}
+                        className="h-8 rounded-none px-3 text-xs"
+                      >
+                        search
+                      </Button>
+                    </div>
+                    <label className="space-y-1">
+                      <span className="text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                        count
+                      </span>
+                      <Input
+                        className="h-8 rounded-none text-xs"
+                        type="number"
+                        min={1}
+                        max={20}
+                        value={number}
+                        onChange={(e) => setNumber(Number(e.target.value))}
+                        disabled={status === 'running'}
+                        title="number of covers"
+                      />
+                    </label>
+                    <label className="space-y-1">
+                      <span className="text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                        exclude keywords
+                      </span>
+                      <Input
+                        className="h-8 rounded-none text-xs"
+                        value={exclude}
+                        onChange={(e) => setExclude(e.target.value)}
+                        placeholder="live, remix, instrumental..."
+                        disabled={status === 'running'}
+                      />
+                    </label>
+                  </form>
+                </section>
+              ) : (
+                <section className="main-panel">
+                  <div className="main-panel-head">
+                    <div>
+                      <div className="panel-title">2. upload local mp3s</div>
+                    </div>
+                  </div>
                   <Input
-                    className="h-9 w-[92px]"
-                    type="number"
-                    min={1}
-                    max={20}
-                    value={number}
-                    onChange={(e) => setNumber(Number(e.target.value))}
+                    className="mb-3 h-8 rounded-none text-xs"
+                    value={query}
+                    onChange={(e) => {
+                      setSongsRunId(null);
+                      setQuery(e.target.value);
+                    }}
+                    placeholder="stack name (used for folder grouping)"
                     disabled={status === 'running'}
-                    title="number of covers"
+                    autoCapitalize="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    autoFocus
                   />
-                  <Input
-                    className="h-9 flex-1 min-w-[220px]"
-                    value={exclude}
-                    onChange={(e) => setExclude(e.target.value)}
-                    placeholder="exclude (comma-separated)"
-                    disabled={status === 'running'}
-                  />
-                  <Button type="submit" disabled={!canSearch} className="ml-auto">
-                    search
-                  </Button>
-                </form>
-              ) : null}
-
-              {mode === 'local' ? (
-                <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400">
                   <input
                     ref={(el) => {
                       fileRef.current = el;
@@ -759,67 +829,117 @@ export default function App() {
                     className="hidden"
                     aria-label="Upload mp3 files"
                   />
-                  <Button
-                    type="button"
-                    className="bg-neutral-900/40 text-neutral-100 border-neutral-800 hover:bg-neutral-900"
-                    onClick={() => fileRef.current?.click()}
-                    disabled={status === 'running' || uploading || !baseId}
-                    title={!baseId ? 'Enter a search query first' : undefined}
-                  >
-                    upload mp3s
-                  </Button>
-                  {songs?.songsDir ? (
-                    <div className="truncate">
-                      folder:{' '}
-                      <span className="text-neutral-300">{songs.songsDir}</span>{' '}
-                      <button
-                        type="button"
-                        className="ml-2 text-neutral-300 underline underline-offset-2 hover:text-neutral-100"
-                        onClick={() => navigator.clipboard?.writeText(songs.songsDir)}
-                      >
-                        copy
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-              ) : null}
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-neutral-400">
+                    <Button
+                      type="button"
+                      className="h-8 rounded-none border-neutral-700 bg-neutral-900 px-3 text-xs text-neutral-100 hover:bg-neutral-900"
+                      onClick={() => fileRef.current?.click()}
+                      disabled={status === 'running' || uploading || !baseId}
+                      title={!baseId ? 'Enter a search query first' : undefined}
+                    >
+                      {uploading ? 'uploading…' : 'upload mp3s'}
+                    </Button>
+                    {songs?.songsDir ? (
+                      <div className="min-w-0 flex-1 truncate">
+                        folder: <span className="text-neutral-200">{songs.songsDir}</span>
+                        <button
+                          type="button"
+                          className="ml-2 text-neutral-300 underline underline-offset-2 hover:text-neutral-100"
+                          onClick={() => navigator.clipboard?.writeText(songs.songsDir)}
+                        >
+                          copy
+                        </button>
+                      </div>
+                    ) : (
+                      <div>Use a query first so uploaded files are grouped consistently.</div>
+                    )}
+                  </div>
+                </section>
+              )}
 
               {!depsOk && health ? (
-                <div className="text-xs text-amber-200/80">
-                  missing deps for this mode. install:{' '}
-                  {!health.ffmpeg ? 'ffmpeg ' : ''}
-                  {mode === 'download' && !health.ytdlp ? 'yt-dlp ' : ''}
-                  {!health.rubberband ? 'rubberband ' : ''}
+                <div className="main-callout">
+                  Missing dependencies for this mode. Install:
+                  {!health.ffmpeg ? ' ffmpeg' : ''}
+                  {mode === 'download' && !health.ytdlp ? ' yt-dlp' : ''}
+                  {!health.rubberband ? ' rubberband' : ''}
                 </div>
               ) : null}
 
-              {error ? <div className="text-xs text-red-300">{error}</div> : null}
+              {error ? (
+                <div className="main-callout">
+                  {error}
+                </div>
+              ) : null}
 
-              {mode === 'download' && searchItems.length ? (
-                <div className="overflow-x-auto">
-                  <div className="grid min-w-[760px] grid-cols-2 gap-3">
-                    <div className="rounded-none border border-neutral-800 bg-neutral-900/20 p-3">
-                      <div className="flex items-center justify-between">
-                        <div className="text-xs text-neutral-300">
-                          results ({searchItems.length}) · selected ({selectedSearch.length})
-                        </div>
+              {showResultsStep ? (
+                <section
+                  ref={(el) => {
+                    resultsStepRef.current = el;
+                  }}
+                  className="main-panel"
+                >
+                  <div className="main-panel-head">
+                    <div>
+                      <div className="panel-title">3. pick results</div>
+                      <div className="mt-1 text-xs text-neutral-400">
+                        {searchItems.length} results, {selectedSearch.length} selected
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      {showResultsStep ? (
                         <Button
                           type="button"
-                          onClick={onDownloadSelected}
-                          disabled={!canDownload}
-                          className="h-8 px-2.5 text-[11px]"
+                          className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
+                          onClick={goToResultsStep}
+                          disabled={status === 'running'}
                         >
-                          download selected
+                          back to 3
                         </Button>
-                      </div>
+                      ) : null}
+                      <Button
+                        type="button"
+                        className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
+                        onClick={() => setAllSearchSelection(true)}
+                        disabled={status === 'running'}
+                      >
+                        select all
+                      </Button>
+                      <Button
+                        type="button"
+                        className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
+                        onClick={() => setAllSearchSelection(false)}
+                        disabled={status === 'running'}
+                      >
+                        clear
+                      </Button>
+                      <Button
+                        type="button"
+                        onClick={onDownloadSelected}
+                        disabled={!canDownload}
+                        className="h-7 rounded-none px-3 text-[11px]"
+                      >
+                        download selected
+                      </Button>
+                    </div>
+                  </div>
 
-                      <div className="mt-2 max-h-[320px] overflow-auto pr-1">
+                  <div className="grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,42%)]">
+                    <div className="max-h-[340px] overflow-auto pr-1">
+                      <div className="space-y-1.5">
                         {searchItems.map((it) => {
                           const checked = Boolean(selectedIds[it.id]);
+                          const previewing = previewUrl === it.url;
                           return (
                             <div
                               key={it.id}
-                              className="flex items-center gap-2 py-1 text-xs"
+                              className={
+                                checked
+                                  ? 'search-row is-selected'
+                                  : previewing
+                                    ? 'search-row is-preview'
+                                    : 'search-row'
+                              }
                             >
                               <input
                                 type="checkbox"
@@ -831,84 +951,108 @@ export default function App() {
                                   }))
                                 }
                                 disabled={status === 'running'}
-                                className="h-4 w-4 accent-neutral-200"
+                                className="h-4 w-4 shrink-0 accent-neutral-200"
                               />
                               <button
                                 type="button"
-                                className="truncate text-left text-neutral-100 hover:underline"
+                                className="min-w-0 flex-1 truncate text-left text-sm text-neutral-100"
                                 onClick={() => setPreviewUrl(it.url)}
                                 title={it.title}
                               >
                                 {it.title}
                               </button>
+                              {previewing ? (
+                                <span className="shrink-0 self-center text-[10px] uppercase tracking-wide text-neutral-400">
+                                  preview
+                                </span>
+                              ) : null}
                             </div>
                           );
                         })}
                       </div>
                     </div>
 
-                    <div className="rounded-none border border-neutral-800 bg-neutral-900/20 p-3">
-                      <div className="text-xs text-neutral-300">preview</div>
-                      <div className="mt-2">
-                        {embedId ? (
-                          <iframe
-                            className="h-[240px] w-full rounded-none border border-neutral-800"
-                            src={`https://www.youtube.com/embed/${embedId}`}
-                            title="YouTube preview"
-                            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
-                            referrerPolicy="strict-origin-when-cross-origin"
-                            allowFullScreen
-                          />
-                        ) : (
-                          <div className="text-xs text-neutral-500">select a result</div>
-                        )}
+                    <div className="search-preview-pane">
+                      <div className="mb-2 text-[11px] uppercase tracking-[0.08em] text-neutral-500">
+                        preview
                       </div>
-                      {previewUrl ? (
-                        <div className="mt-2 truncate text-xs text-neutral-400">
-                          {previewUrl}
+                      {embedId ? (
+                        <iframe
+                          className="h-[252px] w-full border border-neutral-700/70"
+                          src={`https://www.youtube.com/embed/${embedId}`}
+                          title="YouTube preview"
+                          allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
+                          referrerPolicy="strict-origin-when-cross-origin"
+                          allowFullScreen
+                        />
+                      ) : (
+                        <div className="border border-neutral-800 bg-neutral-950/60 p-5 text-xs text-neutral-500">
+                          Pick a result to load preview.
                         </div>
+                      )}
+                      {previewUrl ? (
+                        <div className="mt-2 truncate text-xs text-neutral-400">{previewUrl}</div>
                       ) : null}
                     </div>
                   </div>
-                </div>
+                </section>
               ) : null}
 
-              {songs?.files?.length ? (
-                <div className="rounded-none border border-neutral-800 bg-neutral-900/20 p-3">
-                  <div className="flex items-center justify-between">
-                    <div className="text-xs text-neutral-300">
-                      layers ({selectedSongFiles.length}/{songs.files.length})
-                      {songsRunId ? (
-                        <span className="text-neutral-500"> · from run</span>
-                      ) : null}
+              {showLayersStep ? (
+                <section className="main-panel">
+                  <div className="main-panel-head">
+                    <div>
+                      <div className="panel-title">{layersStepNumber}. pick layers</div>
+                      <div className="mt-1 text-xs text-neutral-400">
+                        {selectedSongFiles.length}/{songs!.files.length} selected
+                        {songsRunId ? <span className="text-neutral-500"> · from run history</span> : null}
+                      </div>
                     </div>
-                    {songsRunId ? (
+                    <div className="flex flex-wrap items-center gap-2">
                       <Button
                         type="button"
-                        className="h-8 px-2.5 text-[11px] bg-neutral-900/40 text-neutral-100 border-neutral-800 hover:bg-neutral-900"
-                        onClick={() => setSongsRunId(null)}
+                        className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
+                        onClick={() => void setAllSongSelection(true)}
                         disabled={status === 'running'}
-                        title="Back to current layer folder"
                       >
-                        latest layers
+                        select all
                       </Button>
-                    ) : null}
-                    <Button
-                      type="button"
-                      onClick={onProcess}
-                      disabled={!canProcess}
-                      className="h-8 px-2.5 text-[11px]"
-                    >
-                      process selected
-                    </Button>
+                      <Button
+                        type="button"
+                        className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
+                        onClick={() => void setAllSongSelection(false)}
+                        disabled={status === 'running'}
+                      >
+                        clear
+                      </Button>
+                      {songsRunId ? (
+                        <Button
+                          type="button"
+                          className="h-7 rounded-none border-neutral-700 bg-neutral-900 px-2.5 text-[11px] text-neutral-100 hover:bg-neutral-900"
+                          onClick={() => setSongsRunId(null)}
+                          disabled={status === 'running'}
+                          title="Back to current layer folder"
+                        >
+                          latest layers
+                        </Button>
+                      ) : null}
+                      <Button
+                        type="button"
+                        onClick={onProcess}
+                        disabled={!canProcess}
+                        className="h-7 rounded-none px-3 text-[11px]"
+                      >
+                        process selected
+                      </Button>
+                    </div>
                   </div>
 
-                  <div className="mt-3 max-h-[360px] overflow-y-auto pr-1">
+                  <div className="max-h-[360px] overflow-y-auto pr-1">
                     <div className="grid gap-2">
-                      {songs.files.map((f) => (
+                      {songs!.files.map((f) => (
                         <div
                           key={f.name}
-                          className="flex items-center gap-2 rounded-none border border-neutral-800 bg-neutral-950/30 p-2"
+                          className={f.selected ? 'layer-row is-selected' : 'layer-row'}
                         >
                           <input
                             type="checkbox"
@@ -917,42 +1061,37 @@ export default function App() {
                             disabled={status === 'running'}
                             className="h-4 w-4 shrink-0 accent-neutral-200"
                           />
-                          <div
-                            className="min-w-0 flex-1 truncate text-xs text-neutral-100"
-                            title={f.name}
-                          >
+                          <div className="min-w-0 flex-1 truncate text-xs text-neutral-100" title={f.name}>
                             {f.name}
                           </div>
                           <InlinePlayer
                             src={f.url}
-                            className="w-[320px] shrink-0"
+                            className="w-full min-w-[210px] max-w-[340px] shrink-0"
                             ariaLabel={`Play ${f.name}`}
                           />
                         </div>
                       ))}
                     </div>
                   </div>
-                </div>
-              ) : baseId ? (
-                <div className="text-xs text-neutral-500">
-                  {mode === 'download'
-                    ? 'search then download, or switch to local mp3s'
-                    : 'upload mp3s to begin'}
-                </div>
+                </section>
               ) : null}
             </div>
 
-            {outputUrl ? (
-              <div className="shrink-0 mt-auto rounded-none border border-neutral-800 bg-neutral-900/20 p-3">
-                <div className="flex items-center gap-3">
-                  <div className="text-xs text-neutral-300">final</div>
+            <div className={outputUrl ? 'main-output-dock is-ready' : 'main-output-dock'}>
+              {outputUrl ? (
+                <div className="flex flex-wrap items-center gap-3">
+                  <div>
+                    <div className="text-sm font-medium text-neutral-100">
+                      {finalStepNumber}. final wav ready
+                    </div>
+                  </div>
                   <InlinePlayer
                     src={outputUrl}
-                    className="min-w-0 flex-1"
+                    className="min-w-[240px] flex-1"
                     ariaLabel="Play final track"
                   />
                   <a
-                    className="shrink-0 text-xs text-neutral-200 underline underline-offset-2"
+                    className="shrink-0 border border-neutral-700 bg-neutral-900 px-3 py-2 text-xs font-medium text-neutral-100 hover:bg-neutral-900"
                     href={outputUrl}
                     target="_blank"
                     rel="noreferrer"
@@ -960,12 +1099,16 @@ export default function App() {
                     download wav
                   </a>
                 </div>
-              </div>
-            ) : (
-              <div className="shrink-0 mt-auto text-xs text-neutral-600">
-                final output will appear here
-              </div>
-            )}
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <div className="text-sm text-neutral-300">
+                      {finalStepNumber}. process selected layers for final wav.
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
           </main>
 
           <aside className="min-h-0">

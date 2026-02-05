@@ -2,7 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Keep things intentionally plain; shadcn provides component primitives. */
+:root {
+  --panel-bg: #0f0f0f;
+  --panel-border: #2a2a2a;
+  --panel-border-strong: #3a3a3a;
+}
+
 html,
 body {
   height: 100%;
@@ -10,6 +15,154 @@ body {
 
 html {
   color-scheme: dark;
+}
+
+body {
+  background: #090909;
+  font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+}
+
+.main-column {
+  container-type: inline-size;
+}
+
+.main-panel {
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--panel-bg);
+  padding: 10px;
+}
+
+.main-panel-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  color: rgb(229 229 229);
+}
+
+.mode-option {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-height: 50px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: #101010;
+  padding: 8px;
+  text-align: left;
+}
+
+.mode-option:hover {
+  border-color: var(--panel-border-strong);
+}
+
+.mode-option.is-active {
+  border-color: #4a4a4a;
+  background: #161616;
+}
+
+.mode-option-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(229 229 229);
+}
+
+.mode-option-copy {
+  font-size: 11px;
+  line-height: 1.2;
+  color: rgb(148 148 148);
+}
+
+.main-callout {
+  border: 1px solid var(--panel-border-strong);
+  border-radius: 0;
+  background: #101010;
+  padding: 8px 10px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgb(212 212 212);
+}
+
+.search-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 7px 8px;
+}
+
+.search-row:hover {
+  background: #131313;
+}
+
+.search-row.is-selected,
+.search-row.is-preview {
+  background: #161616;
+}
+
+.search-preview-pane {
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: #101010;
+  padding: 8px;
+}
+
+.layer-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: #101010;
+  padding: 7px 8px;
+}
+
+.layer-row.is-selected {
+  border-color: #4a4a4a;
+  background: #161616;
+}
+
+.main-output-dock {
+  border: 1px solid var(--panel-border);
+  border-radius: 0;
+  background: var(--panel-bg);
+  padding: 10px;
+}
+
+.main-output-dock.is-ready {
+  border-color: var(--panel-border-strong);
+  background: #101010;
+}
+
+.main-output-dock .slim-range {
+  min-width: 150px;
+}
+
+textarea[aria-label='logs'] {
+  font-family: 'SF Mono', Menlo, monospace;
+}
+
+@media (max-width: 1024px) {
+  .main-panel {
+    padding: 9px;
+  }
+
+  .layer-row {
+    align-items: flex-start;
+  }
 }
 
 .slim-range {
