@@ -31,6 +31,19 @@ type Health = {
   ytdlpVersion?: string | null;
 };
 
+type RunSummary = {
+  id: string;
+  kind: 'download' | 'process';
+  query: string | null;
+  base_id: string | null;
+  mode: Mode | null;
+  status: JobStatus;
+  error: string | null;
+  output_url: string | null;
+  created_at: number;
+  ended_at: number | null;
+};
+
 type SearchItem = {
   id: string;
   title: string;
@@ -47,6 +60,13 @@ type SongsResponse = {
   baseId: string;
   songsDir: string;
   files: SongFile[];
+};
+
+type RunDetail = RunSummary & {
+  options: { number?: number; exclude?: string[]; download?: boolean } | null;
+  selected: SearchItem[] | null;
+  include: string[] | null;
+  log_text: string | null;
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -99,6 +119,9 @@ export default function App() {
   const [selectedIds, setSelectedIds] = useState<Record<string, boolean>>({});
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
 
+  const [runs, setRuns] = useState<RunSummary[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
   const [jobId, setJobId] = useState<string | null>(null);
   const [job, setJob] = useState<JobResponse | null>(null);
   const [busy, setBusy] = useState(false);
@@ -148,6 +171,9 @@ export default function App() {
           .then(setSongs)
           .catch(() => {});
       }
+      api<{ runs: RunSummary[] }>('/api/runs?limit=30')
+        .then((r) => setRuns(r.runs))
+        .catch(() => {});
     }
     return next;
   }
@@ -158,6 +184,12 @@ export default function App() {
     api<Health>('/api/health')
       .then(setHealth)
       .catch(() => setHealth(null));
+  }, []);
+
+  useEffect(() => {
+    api<{ runs: RunSummary[] }>('/api/runs?limit=30')
+      .then((r) => setRuns(r.runs))
+      .catch(() => setRuns([]));
   }, []);
 
   useEffect(() => {
@@ -262,7 +294,13 @@ export default function App() {
     try {
       const started = await api<{ id: string }>('/api/download', {
         method: 'POST',
-        body: JSON.stringify({ baseId, items: selectedSearch }),
+        body: JSON.stringify({
+          baseId,
+          query: query.trim(),
+          number,
+          exclude: excludeList,
+          items: selectedSearch,
+        }),
       });
       setJobId(started.id);
       await poll(started.id);
@@ -356,6 +394,54 @@ export default function App() {
 
   const outputUrl = job?.result?.outputUrl || null;
   const embedId = previewUrl ? youtubeIdFromUrl(previewUrl) : null;
+
+  async function loadRun(id: string) {
+    setError(null);
+    stopPolling();
+    setBusy(false);
+    try {
+      const run = await api<RunDetail>(`/api/runs/${encodeURIComponent(id)}`);
+      if (run.query) setQuery(run.query);
+      if (run.kind === 'download') {
+        setMode('download');
+        if (run.options?.number) setNumber(Number(run.options.number) || 5);
+        if (Array.isArray(run.options?.exclude))
+          setExclude(run.options!.exclude!.join(','));
+        if (Array.isArray(run.selected)) {
+          setSearchItems(run.selected);
+          const nextSel: Record<string, boolean> = {};
+          for (const it of run.selected) nextSel[it.id] = true;
+          setSelectedIds(nextSel);
+          setPreviewUrl(run.selected[0]?.url || null);
+        }
+      } else {
+        setMode('local');
+        if (run.base_id && Array.isArray(run.include)) {
+          await api(`/api/manifest/${encodeURIComponent(run.base_id)}`, {
+            method: 'POST',
+            body: JSON.stringify({ include: run.include }),
+          });
+          await refreshSongs();
+        }
+      }
+
+      setJob({
+        id: run.id,
+        status: run.status,
+        startedAt: run.created_at,
+        endedAt: run.ended_at,
+        logLines: run.log_text ? run.log_text.split('\n') : [],
+        result:
+          run.output_url && run.base_id
+            ? { outputUrl: run.output_url, baseDir: `output/${run.base_id}` }
+            : null,
+        error: run.error,
+      });
+      setJobId(run.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   return (
     <div className="min-h-dvh bg-neutral-950 text-neutral-100">
@@ -655,6 +741,51 @@ export default function App() {
             </div>
           ) : null}
 
+          <div className="rounded-md border border-neutral-800 bg-neutral-900/20 p-3">
+            <div className="flex items-center justify-between">
+              <div className="text-xs text-neutral-300">history</div>
+              <Button
+                type="button"
+                className="h-8 px-2.5 text-[11px] bg-neutral-900/40 text-neutral-100 border-neutral-800 hover:bg-neutral-900"
+                onClick={() => setHistoryOpen((v) => !v)}
+              >
+                {historyOpen ? 'hide' : 'show'}
+              </Button>
+            </div>
+            {historyOpen ? (
+              <div className="mt-2 max-h-[220px] overflow-auto pr-1">
+                {runs.length ? (
+                  runs.map((r) => (
+                    <button
+                      key={r.id}
+                      type="button"
+                      onClick={() => loadRun(r.id)}
+                      className="w-full rounded-md border border-transparent px-2 py-1 text-left text-xs hover:border-neutral-800 hover:bg-neutral-950/40"
+                      title={r.id}
+                    >
+                      <span className="text-neutral-200">
+                        {r.query || r.base_id || r.id}
+                      </span>
+                      <span className="text-neutral-500">
+                        {' '}
+                        · {r.kind} · {r.status} ·{' '}
+                        {new Date(r.created_at).toLocaleString()}
+                      </span>
+                      {r.output_url ? (
+                        <span className="text-neutral-500"> · has output</span>
+                      ) : null}
+                      {r.error ? (
+                        <span className="text-red-300"> · {r.error}</span>
+                      ) : null}
+                    </button>
+                  ))
+                ) : (
+                  <div className="text-xs text-neutral-500">no runs yet</div>
+                )}
+              </div>
+            ) : null}
+          </div>
+
           <Textarea
             className="h-[260px] resize-none font-mono text-xs"
             value={logText || (jobId ? '…' : 'ready')}
@@ -669,4 +800,3 @@ export default function App() {
     </div>
   );
 }
-

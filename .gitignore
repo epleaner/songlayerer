@@ -31,6 +31,10 @@ lib/rubberband/rubberband
 *.wav
 *.mp3
 search_results.json
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
 
 # Logs
 *.log

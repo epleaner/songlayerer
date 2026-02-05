@@ -6,6 +6,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import Busboy from 'busboy';
+import { db } from './db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -251,7 +252,7 @@ function getHealth() {
   };
 }
 
-function startJob({ query, download, number, exclude }) {
+function startJob({ query, download, number, exclude, include }) {
   const now = Date.now();
   const id = `${safeId(query)}_${now}`;
   const job = {
@@ -265,6 +266,29 @@ function startJob({ query, download, number, exclude }) {
   };
   jobs.set(id, job);
   runningJobId = id;
+
+  const baseId = baseIdFromQuery(query);
+  const baseDir = path.join('output', baseId);
+  const outputFile = path.join(baseDir, `layered_${baseId}.wav`);
+  const outputUrl = `/${outputFile.split(path.sep).join('/')}`;
+
+  db.insertRun({
+    id,
+    kind: 'process',
+    query,
+    base_id: baseId,
+    mode: download ? 'download' : 'local',
+    options_json: JSON.stringify({ download, number, exclude }),
+    selected_json: null,
+    include_json: include ? JSON.stringify(include) : null,
+    output_url: null,
+    output_file: null,
+    status: 'running',
+    error: null,
+    log_text: null,
+    created_at: now,
+    ended_at: null,
+  });
 
   const args = [];
   if (download) {
@@ -284,6 +308,7 @@ function startJob({ query, download, number, exclude }) {
 
   Object.defineProperty(job, '_child', { value: child, enumerable: false });
   Object.defineProperty(job, '_query', { value: query, enumerable: false });
+  Object.defineProperty(job, '_baseId', { value: baseId, enumerable: false });
 
   child.stdout.on('data', (c) => appendLines(job, c));
   child.stderr.on('data', (c) => appendLines(job, c));
@@ -297,24 +322,51 @@ function startJob({ query, download, number, exclude }) {
     const { baseDir, outputFile, outputUrl } = computeResult(query);
     if (stopped) {
       if (fs.existsSync(outputFile)) job.result = { outputUrl, baseDir };
+      db.updateRun({
+        id,
+        status: 'stopped',
+        ended_at: job.endedAt,
+        error: job.error,
+        log_text: job.logLines.join('\n'),
+        output_url: job.result?.outputUrl || null,
+        output_file: fs.existsSync(outputFile) ? outputFile : null,
+      });
       return;
     }
 
     if (code === 0 && fs.existsSync(outputFile)) {
       job.status = 'success';
       job.result = { outputUrl, baseDir };
+      db.updateRun({
+        id,
+        status: 'success',
+        ended_at: job.endedAt,
+        error: null,
+        log_text: job.logLines.join('\n'),
+        output_url: outputUrl,
+        output_file: outputFile,
+      });
     } else {
       job.status = 'error';
       job.error = `Process exited with code ${code}`;
       job.result = fs.existsSync(outputFile) ? { outputUrl, baseDir } : null;
       job.logLines.push(job.error);
+      db.updateRun({
+        id,
+        status: 'error',
+        ended_at: job.endedAt,
+        error: job.error,
+        log_text: job.logLines.join('\n'),
+        output_url: job.result?.outputUrl || null,
+        output_file: fs.existsSync(outputFile) ? outputFile : null,
+      });
     }
   });
 
   return job;
 }
 
-function startDownloadJob({ baseId, items }) {
+function startDownloadJob({ baseId, items, query, number, exclude }) {
   const now = Date.now();
   const id = `${safeId(`download_${baseId}`)}_${now}`;
   const job = {
@@ -328,6 +380,24 @@ function startDownloadJob({ baseId, items }) {
   };
   jobs.set(id, job);
   runningJobId = id;
+
+  db.insertRun({
+    id,
+    kind: 'download',
+    query: query || null,
+    base_id: baseId,
+    mode: 'download',
+    options_json: JSON.stringify({ number, exclude }),
+    selected_json: JSON.stringify(items),
+    include_json: null,
+    output_url: null,
+    output_file: null,
+    status: 'running',
+    error: null,
+    log_text: null,
+    created_at: now,
+    ended_at: null,
+  });
 
   const { baseDir } = baseDirsFor(baseId);
   fs.mkdirSync(baseDir, { recursive: true });
@@ -358,10 +428,24 @@ function startDownloadJob({ baseId, items }) {
     if (code === 0) {
       job.status = 'success';
       job.result = { baseDir: path.join('output', baseId) };
+      db.updateRun({
+        id,
+        status: 'success',
+        ended_at: job.endedAt,
+        error: null,
+        log_text: job.logLines.join('\n'),
+      });
     } else {
       job.status = 'error';
       job.error = `Process exited with code ${code}`;
       job.logLines.push(job.error);
+      db.updateRun({
+        id,
+        status: 'error',
+        ended_at: job.endedAt,
+        error: job.error,
+        log_text: job.logLines.join('\n'),
+      });
     }
   });
 
@@ -402,8 +486,24 @@ function stopJobById(id) {
   if (query) {
     const { baseDir, outputFile, outputUrl } = computeResult(query);
     if (fs.existsSync(outputFile)) job.result = { outputUrl, baseDir };
+    db.updateRun({
+      id,
+      status: 'stopped',
+      ended_at: job.endedAt,
+      error: job.error,
+      log_text: job.logLines.join('\n'),
+      output_url: job.result?.outputUrl || null,
+      output_file: fs.existsSync(outputFile) ? outputFile : null,
+    });
   } else if (baseId) {
     job.result = { baseDir: path.join('output', baseId) };
+    db.updateRun({
+      id,
+      status: 'stopped',
+      ended_at: job.endedAt,
+      error: job.error,
+      log_text: job.logLines.join('\n'),
+    });
   }
 
   return { ok: true, code: 200, job };
@@ -417,6 +517,64 @@ const server = http.createServer(async (req, res) => {
   if (pathname === '/api/health') {
     if (req.method !== 'GET') return methodNotAllowed(res);
     return json(res, 200, getHealth());
+  }
+
+  if (pathname === '/api/runs') {
+    if (req.method !== 'GET') return methodNotAllowed(res);
+    const limit = Math.max(
+      1,
+      Math.min(100, Number(u.searchParams.get('limit') || 25))
+    );
+    const runs = db.listRuns(limit);
+    return json(res, 200, { runs });
+  }
+
+  if (pathname.startsWith('/api/runs/')) {
+    if (req.method !== 'GET') return methodNotAllowed(res);
+    const id = decodeURIComponent(pathname.slice('/api/runs/'.length));
+    const run = db.getRun(id);
+    if (!run) return json(res, 404, { error: 'Run not found' });
+
+    const parse = (s) => {
+      if (!s) return null;
+      try {
+        return JSON.parse(s);
+      } catch {
+        return null;
+      }
+    };
+
+    const out = {
+      ...run,
+      options: parse(run.options_json),
+      selected: parse(run.selected_json),
+      include: parse(run.include_json),
+    };
+
+    if (run.base_id) {
+      try {
+        const { songsDir, manifestPath } = baseDirsFor(run.base_id);
+        const include = readManifestInclude(manifestPath);
+        const names = fs.existsSync(songsDir)
+          ? fs
+              .readdirSync(songsDir)
+              .filter((f) => f.toLowerCase().endsWith('.mp3'))
+              .slice(0, 400)
+          : [];
+        out.songs = {
+          songsDir,
+          files: names.map((name) => ({
+            name,
+            url: `/output/${run.base_id}/songs/${encodeURIComponent(name)}`,
+            selected: include ? include.includes(name) : true,
+          })),
+        };
+      } catch {
+        // ignore
+      }
+    }
+
+    return json(res, 200, out);
   }
 
   if (pathname === '/api/search') {
@@ -443,8 +601,13 @@ const server = http.createServer(async (req, res) => {
     }
     try {
       const body = await readJson(req);
+      const query = String(body?.query || '').trim();
       const baseId = safeBaseId(String(body?.baseId || '').trim());
       if (!baseId) return json(res, 400, { error: 'Missing baseId' });
+      const number = Math.max(1, Math.min(20, Number(body?.number || 5)));
+      const exclude = Array.isArray(body?.exclude)
+        ? body.exclude.map(String).map((s) => s.trim()).filter(Boolean)
+        : [];
       const items = Array.isArray(body?.items) ? body.items : [];
       const normalized = items
         .map((it) => ({
@@ -457,7 +620,13 @@ const server = http.createServer(async (req, res) => {
       if (normalized.length === 0) {
         return json(res, 400, { error: 'No items provided' });
       }
-      const job = startDownloadJob({ baseId, items: normalized });
+      const job = startDownloadJob({
+        baseId,
+        items: normalized,
+        query: query || null,
+        number,
+        exclude,
+      });
       return json(res, 200, { id: job.id });
     } catch (e) {
       return json(res, 400, { error: e instanceof Error ? e.message : String(e) });
@@ -483,12 +652,15 @@ const server = http.createServer(async (req, res) => {
 
       // Optional manifest write for "selected layers" support
       const baseId = safeBaseId(baseIdFromQuery(query));
-      if (Array.isArray(body?.include)) {
+      const include = Array.isArray(body?.include)
+        ? body.include.map(String).map((s) => s.trim()).filter(Boolean)
+        : null;
+      if (include) {
         const { manifestPath } = baseDirsFor(baseId);
-        writeManifestInclude(manifestPath, body.include);
+        writeManifestInclude(manifestPath, include);
       }
 
-      const job = startJob({ query, download, number, exclude });
+      const job = startJob({ query, download, number, exclude, include });
       return json(res, 200, { id: job.id });
     } catch (e) {
       return json(res, 400, { error: e instanceof Error ? e.message : String(e) });
