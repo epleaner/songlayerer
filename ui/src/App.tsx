@@ -255,7 +255,6 @@ export default function App() {
   const pollRef = useRef<number | null>(null);
   const logRef = useRef<HTMLTextAreaElement | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
-  const resultsStepRef = useRef<HTMLElement | null>(null);
 
   const baseId = useMemo(() => baseIdFromQuery(query.trim()), [query]);
 
@@ -498,11 +497,6 @@ export default function App() {
       setBusy(false);
       setError(err instanceof Error ? err.message : String(err));
     }
-  }
-
-  function goToResultsStep() {
-    if (!resultsStepRef.current) return;
-    resultsStepRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
   async function onUpload(ev: ChangeEvent<HTMLInputElement>) {
@@ -873,12 +867,7 @@ export default function App() {
               ) : null}
 
               {showResultsStep ? (
-                <section
-                  ref={(el) => {
-                    resultsStepRef.current = el;
-                  }}
-                  className="main-panel"
-                >
+                <section className="main-panel">
                   <div className="main-panel-head">
                     <div>
                       <div className="panel-title">3. pick results</div>
@@ -887,16 +876,6 @@ export default function App() {
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      {showResultsStep ? (
-                        <Button
-                          type="button"
-                          className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
-                          onClick={goToResultsStep}
-                          disabled={status === 'running'}
-                        >
-                          back to 3
-                        </Button>
-                      ) : null}
                       <Button
                         type="button"
                         className="h-7 rounded-none border-neutral-700 bg-neutral-900 text-[11px] text-neutral-100 hover:bg-neutral-900"
